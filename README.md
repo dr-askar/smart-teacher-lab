@@ -19,3 +19,14 @@
 
 ## التطوير المحلي
 `npm install` ثم `npx wrangler dev`. ضع المفتاح في `.dev.vars` محلياً (مستبعد من Git) بصيغة `OPENROUTER_API_KEY=...`.
+
+
+## Multi-provider routing (v4)
+The Worker can use **independent providers**, not multiple OpenRouter accounts. Set Cloudflare Worker runtime **Secrets** (never paste keys into GitHub or the browser):
+- `OPENROUTER_API_KEY` — optional, OpenRouter free models only.
+- `GEMINI_API_KEY` — optional, Google Gemini API.
+- `GROQ_API_KEY` — optional, Groq API.
+
+Optional non-secret Variables: `GEMINI_MODEL=gemini-2.5-flash-lite`, `GROQ_MODEL=llama-3.3-70b-versatile`. These defaults are subject to provider availability and account eligibility. Check provider free-tier limits and **disable paid billing / set spending limits** in each provider dashboard before enabling its secret: Gemini and Groq API models are not intrinsically guaranteed free for every account or over every quota. The Worker does not enforce a monetary cap for those providers.
+
+The Worker selects among configured providers and tries a different independent provider on errors, within a 60-second overall deadline. It never rotates multiple accounts to bypass a single provider's limits. The one-request-per-minute-per-IP Cloudflare rate limit remains in place. `GET /api/health` exposes which providers have secrets configured, without exposing secret values. `POST /api/test` checks the OpenRouter key when configured; otherwise it only checks presence of other provider secrets (not their validity).
