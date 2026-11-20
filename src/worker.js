@@ -1,4 +1,4 @@
-const VERSION="2026-11-20-automatic-key-rotation-v8";
+const VERSION="2026-11-20-per-teacher-minute-v9";
 const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
 const keySlots=env=>[env.OPENROUTER_API_KEY,env.OPENROUTER_API_KEY_2,env.OPENROUTER_API_KEY_3,env.OPENROUTER_API_KEY_4,env.OPENROUTER_API_KEY_5];
 // Rotate among configured keys by UTC minute; deterministic across Worker instances.
@@ -131,8 +131,8 @@ export default {async fetch(req,env){
  if(!env.GEN_LIMIT)return j({error:"حماية حد الاستخدام غير مفعّلة"},503);
  if(Number(req.headers.get("Content-Length")||0)>8000)return j({error:"طلب كبير جداً"},413);
  if(u.pathname==="/api/test"){try{return j(activeKey(env)?{...await checkKey(env),version:VERSION,providers:{gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY}}:{ok:true,configured:true,version:VERSION,message:"تم العثور على مفاتيح مزودين، لكن لم تُختبر صلاحيتها",providers:{gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY}})}catch(err){return j({error:err.message},502)}}
- const ip=req.headers.get("CF-Connecting-IP")||"unknown",lim=await env.GEN_LIMIT.limit({key:"global-generation"});
- if(!lim.success)return j({error:"المختبر يسمح بطلب توليد واحد فقط في الدقيقة لجميع المستخدمين. حاول بعد دقيقة"},429,{"retry-after":"60"});
+ const ip=req.headers.get("CF-Connecting-IP")||"unknown",lim=await env.GEN_LIMIT.limit({key:ip});
+ if(!lim.success)return j({error:"يمكنك إرسال طلب توليد واحد كل دقيقة من شبكتك. حاول بعد دقيقة"},429,{"retry-after":"60"});
  try{
   const body=await req.json();
   const p=typeof body.prompt==="string"?body.prompt.trim():"";if(p.length<12||p.length>3500)return j({error:"الوصف يجب أن يكون بين 12 و3500 حرف"},400);
