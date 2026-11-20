@@ -1,18 +1,34 @@
 const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
 const model=e=>e.OPENROUTER_MODEL||"openrouter/free";
 async function ask(e,messages,max_tokens){
- for(let n=0;n<3;n++){
-  let r;try{r=await fetch("https://openrouter.ai/api/v1/chat/completions",{method:"POST",headers:{"Authorization":"Bearer "+e.OPENROUTER_API_KEY,"Content-Type":"application/json","X-Title":"Smart Teacher Lab"},body:JSON.stringify({model:model(e),messages,max_tokens,temperature:.5}),signal:AbortSignal.timeout(65000)})}catch{if(n<2)continue;throw Error("تعذّر الاتصال بخدمة الذكاء الاصطناعي")}
-  if(!r.ok){if([429,500,502,503,504].includes(r.status)&&n<2)continue;throw Error(r.status===429?"النموذج مشغول، حاول لاحقاً":r.status===402?"انتهت الحصة المجانية":r.status===401?"مفتاح OpenRouter غير صالح":"تعذّر الطلب: "+r.status)}
-  const data=await r.json();const choice=data?.choices?.[0];const msg=choice?.message;
-  const content=typeof msg?.content==="string"?msg.content:Array.isArray(msg?.content)?msg.content.filter(x=>x?.type==="text").map(x=>x.text||"").join(""):"";
-  if(!content.trim()){
-   if(n<2)continue;
-   const reason=choice?.finish_reason||data?.error?.message||"no_text";
-   throw Error("لم يرجع النموذج نصاً بعد عدة محاولات ("+String(reason).slice(0,80)+"). جرّب نموذجاً مجانياً آخر");
+ const models=[model(e),e.OPENROUTER_FALLBACK_MODEL].filter(Boolean);
+ const attempts=models.length>1?models:[models[0],models[0]];
+ let last="النموذج المجاني غير متاح حالياً";
+ for(let n=0;n<attempts.length;n++){
+  const target=attempts[n];
+  let r;
+  try{
+   r=await fetch("https://openrouter.ai/api/v1/chat/completions",{
+    method:"POST",
+    headers:{"Authorization":"Bearer "+e.OPENROUTER_API_KEY,"Content-Type":"application/json","X-Title":"Smart Teacher Lab"},
+    body:JSON.stringify({model:target,messages,max_tokens,temperature:.4}),
+    signal:AbortSignal.timeout(n===0?35000:25000)
+   });
+  }catch(err){last=err?.name==="TimeoutError"?"انتهت مهلة النموذج المجاني":"تعذر الاتصال بـ OpenRouter";continue}
+  if(!r.ok){
+   if(r.status===401)throw Error("مفتاح OpenRouter غير صالح");
+   if(r.status===402)throw Error("رصيد OpenRouter غير كافٍ");
+   last=r.status===429?"النموذج المجاني مزدحم (429)":"خطأ من OpenRouter ("+r.status+")";
+   if(![429,500,502,503,504].includes(r.status))throw Error(last);
+   continue;
   }
-  return {content,model:data.model||model(e)};
+  let data;try{data=await r.json()}catch{last="استجابة غير مفهومة";continue}
+  const choice=data?.choices?.[0],msg=choice?.message;
+  const content=typeof msg?.content==="string"?msg.content:Array.isArray(msg?.content)?msg.content.filter(x=>x?.type==="text").map(x=>x.text||"").join(""):"";
+  if(!content.trim()){last="استجابة فارغة من النموذج ("+(choice?.finish_reason||"no_text")+")";continue}
+  return {content,model:data.model||target};
  }
+ throw Error(last+". حاول بعد قليل أو اختر نموذجاً آخر.");
 }
 export default {async fetch(req,env){
  const u=new URL(req.url);if(!u.pathname.startsWith("/api/"))return env.ASSETS.fetch(req);
