@@ -1,8 +1,29 @@
-const VERSION="2026-11-20-keycheck-v2";
+const VERSION="2026-11-20-multi-free-v3";
 const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
-const model=e=>e.OPENROUTER_MODEL||"baidu/ernie-5.5-flash-preview:free";
-const backup=e=>e.OPENROUTER_FALLBACK_MODEL||"nvidia/nemotron-3-ultra-550b-a55b:free";
-const isFree=id=>typeof id==="string"&&(id==="openrouter/free"||id.endsWith(":free"));
+const PREFERRED=[
+ {name:"ERNIE 5.5 Flash",pattern:/^baidu\/.*ernie.*flash.*:free$/i},
+ {name:"Nemotron 3 Ultra",pattern:/^nvidia\/.*nemotron-3-ultra.*:free$/i},
+ {name:"Particle-1",pattern:/^particle-ai\/.*particle-1.*:free$/i},
+ {name:"Nemotron 3.5 Super VL",pattern:/^nvidia\/.*nemotron-3[.]5-super.*:free$/i},
+ {name:"Gemma 4 31B",pattern:/^google\/.*gemma-4-31b.*:free$/i},
+ {name:"Dots3 Note",pattern:/^dots-studio\/.*dots.*note.*:free$/i},
+ {name:"Nemotron 3.5 Lightning",pattern:/^nvidia\/.*nemotron-3[.]5-lightning.*:free$/i}
+];
+let catalogCache=null,catalogTime=0;
+async function availableModels(){
+ if(catalogCache&&Date.now()-catalogTime<600000)return catalogCache;
+ const response=await fetch("https://openrouter.ai/api/v1/models",{signal:AbortSignal.timeout(8000)});
+ if(!response.ok)throw Error("تعذر تحديث قائمة النماذج المجانية من OpenRouter");
+ const data=await response.json(),all=Array.isArray(data?.data)?data.data:[];
+ const models=PREFERRED.map(p=>{const m=all.find(x=>p.pattern.test(x.id)&&Number(x.pricing?.prompt)===0&&Number(x.pricing?.completion)===0);return m?{id:m.id,name:p.name}:null}).filter(Boolean);
+ if(models.length<2)throw Error("لا يوجد حالياً عدد كافٍ من النماذج المجانية المؤكدة");
+ catalogCache=models;catalogTime=Date.now();return models;
+}
+function orderModels(models,key){
+ let hash=0;for(const ch of key)hash=(Math.imul(hash,31)+ch.charCodeAt(0))|0;
+ const start=(Math.abs(hash)+Math.floor(Date.now()/60000))%models.length;
+ return [models[start],models[(start+1)%models.length]];
+}
 async function checkKey(env){
  let r;
  try{r=await fetch("https://openrouter.ai/api/v1/key",{headers:{"Authorization":"Bearer "+env.OPENROUTER_API_KEY},signal:AbortSignal.timeout(10000)})}
@@ -12,15 +33,14 @@ async function checkKey(env){
  const data=await r.json();
  return {ok:true,keyValid:true,modelAvailability:"not_tested",message:"المفتاح صالح، لكن توفر النماذج المجانية لم يُختبر",usage:data?.data?.usage??null,limit:data?.data?.limit??null};
 }
-async function ask(e,messages,max_tokens){
- const attempts=[model(e),backup(e)];
- if(attempts.some(id=>!isFree(id)))throw Error("تم رفض نموذج غير مجاني حفاظاً على مجانية المشروع");
+async function ask(e,messages,max_tokens,clientKey){
+ const attempts=orderModels(await availableModels(),clientKey);
  let last="النموذج المجاني غير متاح حالياً";
  const deadline=Date.now()+60000;
  for(let n=0;n<attempts.length;n++){
   const remaining=deadline-Date.now();
   if(remaining<1500)break;
-  const target=attempts[n];
+  const target=attempts[n].id;
   let r;
   try{
    r=await fetch("https://openrouter.ai/api/v1/chat/completions",{
@@ -49,7 +69,7 @@ async function ask(e,messages,max_tokens){
 }
 export default {async fetch(req,env){
  const u=new URL(req.url);if(!u.pathname.startsWith("/api/"))return env.ASSETS.fetch(req);
- if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!env.OPENROUTER_API_KEY,model:model(env),version:VERSION});
+ if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!env.OPENROUTER_API_KEY,model:"auto-free",version:VERSION,preferredModels:PREFERRED.map(x=>x.name)});
  if(!["/api/test","/api/generate"].includes(u.pathname))return j({error:"غير موجود"},404);
  if(req.method!=="POST")return j({error:"طريقة غير مدعومة"},405);
  const origin=req.headers.get("Origin");if(origin&&origin!==u.origin)return j({error:"طلب خارجي غير مسموح"},403);
@@ -67,7 +87,7 @@ export default {async fetch(req,env){
 DESIGN QUALITY: make a genuine simulation, not a trivial counter or a generic quiz. Choose a visual metaphor appropriate to the subject: apparatus, circuit, beakers, geometry diagram, animated objects, or SVG diagram. Provide a clear learning objective, a real-world scenario, 2-3 meaningful adjustable variables or choices, a visually changing simulation, scientifically accurate calculations and units, immediate explanatory feedback, a reset button, and one prediction/challenge question with a reveal/check answer. Explain causal relationships and limits. Use Arabic RTL labels, beautiful responsive layout, CSS gradients/cards and accessible buttons. Keep the educational interaction central; avoid decorative clutter.
 
 IMPLEMENTATION: HTML fragment only. Inline CSS scoped under .lab-experiment. One inline script in an IIFE that selects elements within .lab-experiment and wires events with addEventListener. Include <div class="lab-experiment"> as the root. Use SVG and CSS animations when useful. Do not rely on remote assets, imports, fetch, external URLs, libraries, iframes, document.write, eval, localStorage, or browser permissions. No external data. Do not fake physical accuracy: state simplifications. Ensure JavaScript syntax is valid, controls update both numerical results and visual state. Target roughly 4500-10000 characters; prioritize working controls over verbose text. Output code only.`;
-  const r=await ask(env,[{role:"system",content:system},{role:"user",content:"Create the following high-quality teaching simulation: "+p}],5200);
+  const r=await ask(env,[{role:"system",content:system},{role:"user",content:"Create the following high-quality teaching simulation: "+p}],5200,ip);
   let fragment=r.content.trim().replace(/^```(?:html)?\s*/i,"").replace(/\s*```$/,"");
   if(/<html\b/i.test(fragment))fragment=fragment.replace(/^[\s\S]*?<body[^>]*>/i,"").replace(/<\/body>[\s\S]*$/i,"");
   if(!fragment||fragment.length>65000||/<(?:iframe|object|embed|form|base|meta|link)\b/i.test(fragment)||/\b(?:fetch|XMLHttpRequest|WebSocket|importScripts|eval)\s*\(/i.test(fragment)||/<script\b[^>]*\bsrc\s*=/i.test(fragment)||/<script\b/i.test(fragment)&&!/<\/script>/i.test(fragment)||!/(?:<input|<button|<select)/i.test(fragment))throw Error("النموذج لم يُنتج تجربة تفاعلية مكتملة. حاول بعد دقيقة.");
