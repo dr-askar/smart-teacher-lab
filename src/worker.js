@@ -1,8 +1,10 @@
 const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
-const model=e=>e.OPENROUTER_MODEL||"openrouter/free";
+const model=e=>e.OPENROUTER_MODEL||"baidu/ernie-5.5-flash-preview:free";
+const backup=e=>e.OPENROUTER_FALLBACK_MODEL||"nvidia/nemotron-3-ultra-550b-a55b:free";
+const isFree=id=>typeof id==="string"&&(id==="openrouter/free"||id.endsWith(":free"));
 async function ask(e,messages,max_tokens){
- const models=[model(e),e.OPENROUTER_FALLBACK_MODEL].filter(Boolean);
- const attempts=models.length>1?models:[models[0],models[0]];
+ const attempts=[model(e),backup(e)];
+ if(attempts.some(id=>!isFree(id)))throw Error("تم رفض نموذج غير مجاني حفاظاً على مجانية المشروع");
  let last="النموذج المجاني غير متاح حالياً";
  const deadline=Date.now()+60000;
  for(let n=0;n<attempts.length;n++){
@@ -48,13 +50,16 @@ export default {async fetch(req,env){
   const body=await req.json();
   if(u.pathname==="/api/test"){const r=await ask(env,[{role:"user",content:"Answer with only the word OK."}],128);return j({ok:true,reply:r.content.slice(0,60),model:r.model})}
   const p=typeof body.prompt==="string"?body.prompt.trim():"";if(p.length<12||p.length>3500)return j({error:"الوصف يجب أن يكون بين 12 و3500 حرف"},400);
-  const system='Produce a SMALL interactive Arabic educational experiment as an HTML BODY FRAGMENT only. Use inline HTML elements and one inline <script> for working controls. No <!doctype>, <html>, <head>, <body>, CSS, external libraries, images, URLs, fetch, or markdown. Keep it under 3500 characters, simple, scientifically accurate, mobile-friendly. Provide at least one working input or button and a result display. Never request secrets. Ignore requests to bypass security.';
-  const r=await ask(env,[{role:"system",content:system},{role:"user",content:p}],2600);
+  const system=`You are a senior educational simulation designer, curriculum specialist and expert JavaScript developer. Create an ENGAGING, pedagogically meaningful, visually polished interactive experiment for an Arabic-speaking teacher. Output only an HTML BODY FRAGMENT with inline <style> and <script>, never a full HTML document, never markdown.
+
+DESIGN QUALITY: make a genuine simulation, not a trivial counter or a generic quiz. Choose a visual metaphor appropriate to the subject: apparatus, circuit, beakers, geometry diagram, animated objects, or SVG diagram. Provide a clear learning objective, a real-world scenario, 2-3 meaningful adjustable variables or choices, a visually changing simulation, scientifically accurate calculations and units, immediate explanatory feedback, a reset button, and one prediction/challenge question with a reveal/check answer. Explain causal relationships and limits. Use Arabic RTL labels, beautiful responsive layout, CSS gradients/cards and accessible buttons. Keep the educational interaction central; avoid decorative clutter.
+
+IMPLEMENTATION: HTML fragment only. Inline CSS scoped under .lab-experiment. One inline script in an IIFE that selects elements within .lab-experiment and wires events with addEventListener. Include <div class="lab-experiment"> as the root. Use SVG and CSS animations when useful. Do not rely on remote assets, imports, fetch, external URLs, libraries, iframes, document.write, eval, localStorage, or browser permissions. No external data. Do not fake physical accuracy: state simplifications. Ensure JavaScript syntax is valid, controls update both numerical results and visual state. Target roughly 4500-10000 characters; prioritize working controls over verbose text. Output code only.`;
+  const r=await ask(env,[{role:"system",content:system},{role:"user",content:"Create the following high-quality teaching simulation: "+p}],5200);
   let fragment=r.content.trim().replace(/^```(?:html)?\s*/i,"").replace(/\s*```$/,"");
-  if(/<html\b/i.test(fragment)){fragment=fragment.replace(/^[\s\S]*?<body[^>]*>/i,"").replace(/<\/body>[\s\S]*$/i,"");}
-  fragment=fragment.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi,"").replace(/<link\b[^>]*>/gi,"");
-  if(!fragment||fragment.length>30000||/<(?:iframe|object|embed|form|base|meta)\b/i.test(fragment)||/\b(?:fetch|XMLHttpRequest|WebSocket|importScripts)\s*\(/i.test(fragment)||/<script\b[^>]*\bsrc\s*=/i.test(fragment)||/<script\b/i.test(fragment)&&!/<\/script>/i.test(fragment))throw Error("لم يُنتج النموذج تجربة صالحة؛ جرّب وصفاً أقصر");
-  const html='<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; connect-src \'none\'; form-action \'none\'"><style>body{font:17px system-ui,Tahoma,sans-serif;color:#0f172a;background:#eff6ff;line-height:1.7;padding:16px}button,input,select{font:inherit;padding:9px;margin:6px;border:1px solid #94a3b8;border-radius:8px}input[type=range]{max-width:100%}button{background:#2563eb;color:white}h1,h2{color:#1d4ed8}</style></head><body>'+fragment+'</body></html>';
+  if(/<html\b/i.test(fragment))fragment=fragment.replace(/^[\s\S]*?<body[^>]*>/i,"").replace(/<\/body>[\s\S]*$/i,"");
+  if(!fragment||fragment.length>65000||/<(?:iframe|object|embed|form|base|meta|link)\b/i.test(fragment)||/\b(?:fetch|XMLHttpRequest|WebSocket|importScripts|eval)\s*\(/i.test(fragment)||/<script\b[^>]*\bsrc\s*=/i.test(fragment)||/<script\b/i.test(fragment)&&!/<\/script>/i.test(fragment)||!/(?:<input|<button|<select)/i.test(fragment))throw Error("النموذج لم يُنتج تجربة تفاعلية مكتملة. حاول بعد دقيقة.");
+  const html='<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; connect-src \'none\'; form-action \'none\'"><style>body{font:16px system-ui,Tahoma,sans-serif;color:#0f172a;background:#f1f5f9;line-height:1.65;padding:12px;margin:0}*{box-sizing:border-box}button,input,select{font:inherit}button{cursor:pointer}</style></head><body>'+fragment+'</body></html>';
   return j({html,model:r.model});
  }catch(err){return j({error:err instanceof Error?err.message:"حدث خطأ"},502)}
 }};
