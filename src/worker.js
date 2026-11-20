@@ -1,8 +1,7 @@
-const VERSION="2026-11-20-global-minute-v6";
+const VERSION="2026-11-20-private-key-routing-v7";
 const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
 const keySlots=env=>[env.OPENROUTER_API_KEY,env.OPENROUTER_API_KEY_2,env.OPENROUTER_API_KEY_3,env.OPENROUTER_API_KEY_4,env.OPENROUTER_API_KEY_5];
 const activeKey=env=>{const n=Number(env.OPENROUTER_ACTIVE_KEY||1);if(!Number.isInteger(n)||n<1||n>5)throw Error("OPENROUTER_ACTIVE_KEY يجب أن يكون بين 1 و5");return keySlots(env)[n-1]||null};
-const slotInfo=env=>keySlots(env).map((key,i)=>({slot:i+1,configured:!!key}));
 const PREFERRED=[
  {name:"ERNIE 5.5 Flash",pattern:/^baidu\/.*ernie.*flash.*:free$/i},
  {name:"Nemotron 3 Ultra",pattern:/^nvidia\/.*nemotron-3-ultra.*:free$/i},
@@ -122,7 +121,7 @@ async function askProviders(env,messages,maxTokens,clientKey){
 }
 export default {async fetch(req,env){
  const u=new URL(req.url);if(!u.pathname.startsWith("/api/"))return env.ASSETS.fetch(req);
- if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!(keySlots(env).some(Boolean)||env.GEMINI_API_KEY||env.GROQ_API_KEY),providers:{openrouter:!!activeKey(env),gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY},openrouterKeys:slotInfo(env),activeOpenrouterKey:Number(env.OPENROUTER_ACTIVE_KEY||1),model:"multi-provider",version:VERSION,preferredModels:PREFERRED.map(x=>x.name)});
+ if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!(keySlots(env).some(Boolean)||env.GEMINI_API_KEY||env.GROQ_API_KEY),providers:{openrouter:!!activeKey(env),gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY},openrouterKeyCount:keySlots(env).filter(Boolean).length,model:"multi-provider",version:VERSION,preferredModels:PREFERRED.map(x=>x.name)});
  if(!["/api/test","/api/generate"].includes(u.pathname))return j({error:"غير موجود"},404);
  if(req.method!=="POST")return j({error:"طريقة غير مدعومة"},405);
  const origin=req.headers.get("Origin");if(origin&&origin!==u.origin)return j({error:"طلب خارجي غير مسموح"},403);
