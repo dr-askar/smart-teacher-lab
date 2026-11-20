@@ -1,3 +1,4 @@
+const VERSION="2026-11-20-keycheck-v2";
 const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
 const model=e=>e.OPENROUTER_MODEL||"baidu/ernie-5.5-flash-preview:free";
 const backup=e=>e.OPENROUTER_FALLBACK_MODEL||"nvidia/nemotron-3-ultra-550b-a55b:free";
@@ -48,14 +49,14 @@ async function ask(e,messages,max_tokens){
 }
 export default {async fetch(req,env){
  const u=new URL(req.url);if(!u.pathname.startsWith("/api/"))return env.ASSETS.fetch(req);
- if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!env.OPENROUTER_API_KEY,model:model(env)});
+ if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!env.OPENROUTER_API_KEY,model:model(env),version:VERSION});
  if(!["/api/test","/api/generate"].includes(u.pathname))return j({error:"غير موجود"},404);
  if(req.method!=="POST")return j({error:"طريقة غير مدعومة"},405);
  const origin=req.headers.get("Origin");if(origin&&origin!==u.origin)return j({error:"طلب خارجي غير مسموح"},403);
  if(!env.OPENROUTER_API_KEY)return j({error:"لم تتم إضافة مفتاح OpenRouter بعد"},503);
  if(!env.GEN_LIMIT)return j({error:"حماية حد الاستخدام غير مفعّلة"},503);
  if(Number(req.headers.get("Content-Length")||0)>8000)return j({error:"طلب كبير جداً"},413);
- if(u.pathname==="/api/test"){try{return j(await checkKey(env))}catch(err){return j({error:err.message},502)}}
+ if(u.pathname==="/api/test"){try{return j({...await checkKey(env),version:VERSION})}catch(err){return j({error:err.message},502)}}
  const ip=req.headers.get("CF-Connecting-IP")||"unknown",lim=await env.GEN_LIMIT.limit({key:ip});
  if(!lim.success)return j({error:"تم بلوغ حد الطلبات. حاول بعد دقيقة"},429,{"retry-after":"60"});
  try{
