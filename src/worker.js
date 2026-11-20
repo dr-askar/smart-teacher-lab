@@ -4,7 +4,10 @@ async function ask(e,messages,max_tokens){
  const models=[model(e),e.OPENROUTER_FALLBACK_MODEL].filter(Boolean);
  const attempts=models.length>1?models:[models[0],models[0]];
  let last="النموذج المجاني غير متاح حالياً";
+ const deadline=Date.now()+60000;
  for(let n=0;n<attempts.length;n++){
+  const remaining=deadline-Date.now();
+  if(remaining<1500)break;
   const target=attempts[n];
   let r;
   try{
@@ -12,7 +15,7 @@ async function ask(e,messages,max_tokens){
     method:"POST",
     headers:{"Authorization":"Bearer "+e.OPENROUTER_API_KEY,"Content-Type":"application/json","X-Title":"Smart Teacher Lab"},
     body:JSON.stringify({model:target,messages,max_tokens,temperature:.4}),
-    signal:AbortSignal.timeout(n===0?35000:25000)
+    signal:AbortSignal.timeout(Math.min(remaining,n===0?45000:remaining))
    });
   }catch(err){last=err?.name==="TimeoutError"?"انتهت مهلة النموذج المجاني":"تعذر الاتصال بـ OpenRouter";continue}
   if(!r.ok){
