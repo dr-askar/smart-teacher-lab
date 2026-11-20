@@ -55,6 +55,7 @@ async function ask(e,messages,max_tokens,clientKey){
    if(r.status===402)throw Error("رصيد OpenRouter غير كافٍ");
    if(r.status===403)throw Error("مفتاح OpenRouter لا يملك صلاحية استخدام هذا النموذج");
    let details="";try{const d=await r.json();details=String(d?.error?.message||"").slice(0,180)}catch{}
+   if(r.status===429&&/free-models-per-day/i.test(details))throw Error("انتهت الحصة اليومية المجانية لحساب OpenRouter. تغيير النموذج لن يحل المشكلة؛ انتظر تجدد الحصة اليومية. التجارب الجاهزة تعمل دون AI.");
    last=r.status===429?"OpenRouter أعاد 429 للنموذج "+target+(details?": "+details:""): "خطأ OpenRouter ("+r.status+") مع "+target+(details?": "+details:"");
    if(![429,500,502,503,504].includes(r.status))throw Error(last);
    continue;
