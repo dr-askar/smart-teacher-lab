@@ -1,7 +1,9 @@
-const VERSION="2026-11-20-private-key-routing-v7";
+const VERSION="2026-11-20-automatic-key-rotation-v8";
 const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
 const keySlots=env=>[env.OPENROUTER_API_KEY,env.OPENROUTER_API_KEY_2,env.OPENROUTER_API_KEY_3,env.OPENROUTER_API_KEY_4,env.OPENROUTER_API_KEY_5];
-const activeKey=env=>{const n=Number(env.OPENROUTER_ACTIVE_KEY||1);if(!Number.isInteger(n)||n<1||n>5)throw Error("OPENROUTER_ACTIVE_KEY يجب أن يكون بين 1 و5");return keySlots(env)[n-1]||null};
+// Rotate among configured keys by UTC minute; deterministic across Worker instances.
+// This needs no shared counter and respects the global one-generation-per-minute limiter.
+const activeKey=env=>{const keys=keySlots(env).filter(Boolean);return keys.length?keys[Math.floor(Date.now()/60000)%keys.length]:null};
 const PREFERRED=[
  {name:"ERNIE 5.5 Flash",pattern:/^baidu\/.*ernie.*flash.*:free$/i},
  {name:"Nemotron 3 Ultra",pattern:/^nvidia\/.*nemotron-3-ultra.*:free$/i},
