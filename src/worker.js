@@ -23,7 +23,9 @@ async function ask(e,messages,max_tokens){
   if(!r.ok){
    if(r.status===401)throw Error("مفتاح OpenRouter غير صالح");
    if(r.status===402)throw Error("رصيد OpenRouter غير كافٍ");
-   last=r.status===429?"النموذج المجاني مزدحم (429)":"خطأ من OpenRouter ("+r.status+")";
+   if(r.status===403)throw Error("مفتاح OpenRouter لا يملك صلاحية استخدام هذا النموذج");
+   let details="";try{const d=await r.json();details=String(d?.error?.message||"").slice(0,180)}catch{}
+   last=r.status===429?"OpenRouter أعاد 429 للنموذج "+target+(details?": "+details:""): "خطأ OpenRouter ("+r.status+") مع "+target+(details?": "+details:"");
    if(![429,500,502,503,504].includes(r.status))throw Error(last);
    continue;
   }
@@ -33,7 +35,7 @@ async function ask(e,messages,max_tokens){
   if(!content.trim()){last="استجابة فارغة من النموذج ("+(choice?.finish_reason||"no_text")+")";continue}
   return {content,model:data.model||target};
  }
- throw Error(last+". حاول بعد قليل أو اختر نموذجاً آخر.");
+ throw Error(last+". لا تعاود الطلب قبل انتهاء فترة الانتظار.");
 }
 export default {async fetch(req,env){
  const u=new URL(req.url);if(!u.pathname.startsWith("/api/"))return env.ASSETS.fetch(req);
