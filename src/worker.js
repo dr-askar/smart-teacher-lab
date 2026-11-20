@@ -2,6 +2,15 @@ const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"conte
 const model=e=>e.OPENROUTER_MODEL||"baidu/ernie-5.5-flash-preview:free";
 const backup=e=>e.OPENROUTER_FALLBACK_MODEL||"nvidia/nemotron-3-ultra-550b-a55b:free";
 const isFree=id=>typeof id==="string"&&(id==="openrouter/free"||id.endsWith(":free"));
+async function checkKey(env){
+ let r;
+ try{r=await fetch("https://openrouter.ai/api/v1/key",{headers:{"Authorization":"Bearer "+env.OPENROUTER_API_KEY},signal:AbortSignal.timeout(10000)})}
+ catch(err){throw Error(err?.name==="TimeoutError"?"انتهت مهلة فحص مفتاح OpenRouter":"تعذر الاتصال بخدمة OpenRouter")}
+ if(r.status===401||r.status===403)throw Error("مفتاح OpenRouter مرفوض (HTTP "+r.status+")");
+ if(!r.ok)throw Error("فحص المفتاح فشل (HTTP "+r.status+")");
+ const data=await r.json();
+ return {ok:true,keyValid:true,modelAvailability:"not_tested",message:"المفتاح صالح، لكن توفر النماذج المجانية لم يُختبر",usage:data?.data?.usage??null,limit:data?.data?.limit??null};
+}
 async function ask(e,messages,max_tokens){
  const attempts=[model(e),backup(e)];
  if(attempts.some(id=>!isFree(id)))throw Error("تم رفض نموذج غير مجاني حفاظاً على مجانية المشروع");
@@ -46,11 +55,11 @@ export default {async fetch(req,env){
  if(!env.OPENROUTER_API_KEY)return j({error:"لم تتم إضافة مفتاح OpenRouter بعد"},503);
  if(!env.GEN_LIMIT)return j({error:"حماية حد الاستخدام غير مفعّلة"},503);
  if(Number(req.headers.get("Content-Length")||0)>8000)return j({error:"طلب كبير جداً"},413);
+ if(u.pathname==="/api/test"){try{return j(await checkKey(env))}catch(err){return j({error:err.message},502)}}
  const ip=req.headers.get("CF-Connecting-IP")||"unknown",lim=await env.GEN_LIMIT.limit({key:ip});
  if(!lim.success)return j({error:"تم بلوغ حد الطلبات. حاول بعد دقيقة"},429,{"retry-after":"60"});
  try{
   const body=await req.json();
-  if(u.pathname==="/api/test"){const r=await ask(env,[{role:"user",content:"Answer with only the word OK."}],128);return j({ok:true,reply:r.content.slice(0,60),model:r.model})}
   const p=typeof body.prompt==="string"?body.prompt.trim():"";if(p.length<12||p.length>3500)return j({error:"الوصف يجب أن يكون بين 12 و3500 حرف"},400);
   const system=`You are a senior educational simulation designer, curriculum specialist and expert JavaScript developer. Create an ENGAGING, pedagogically meaningful, visually polished interactive experiment for an Arabic-speaking teacher. Output only an HTML BODY FRAGMENT with inline <style> and <script>, never a full HTML document, never markdown.
 
