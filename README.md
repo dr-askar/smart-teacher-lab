@@ -34,3 +34,7 @@ The Worker selects among configured providers and tries a different independent 
 
 ## Five OpenRouter key slots
 Cloudflare Worker Secrets: `OPENROUTER_API_KEY`, `OPENROUTER_API_KEY_2`, `OPENROUTER_API_KEY_3`, `OPENROUTER_API_KEY_4`, `OPENROUTER_API_KEY_5`. Keep secrets only in Cloudflare, not GitHub. Set optional plain Variable `OPENROUTER_ACTIVE_KEY` to 1–5 (defaults to 1). Only the explicitly selected key is used; no automatic account cycling or retry with another account on daily-quota exhaustion. `GET /api/health` lists configured slots without revealing secrets. Provider fallback to Gemini/Groq remains available if separately configured. OpenRouter free-tier quotas apply per account and multiple keys do not multiply an account's quota.
+
+
+## Current request policy (v9)
+Generation is limited to **one request per 60 seconds per client IP**, not globally. Different public IPs can generate concurrently; people behind the same school NAT/public IP share the cooldown. Client-side localStorage cooldown supplements, but does not replace, server enforcement. OpenRouter keys configured in Cloudflare are automatically selected by UTC minute among nonempty slots; this is time-based rotation, not a persistent per-request round-robin counter. Provider quotas remain independently enforced by their services.
