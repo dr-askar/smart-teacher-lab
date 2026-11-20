@@ -1,5 +1,8 @@
-const VERSION="2026-11-20-multiprovider-v4";
+const VERSION="2026-11-20-five-openrouter-keys-v5";
 const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
+const keySlots=env=>[env.OPENROUTER_API_KEY,env.OPENROUTER_API_KEY_2,env.OPENROUTER_API_KEY_3,env.OPENROUTER_API_KEY_4,env.OPENROUTER_API_KEY_5];
+const activeKey=env=>{const n=Number(env.OPENROUTER_ACTIVE_KEY||1);if(!Number.isInteger(n)||n<1||n>5)throw Error("OPENROUTER_ACTIVE_KEY يجب أن يكون بين 1 و5");return keySlots(env)[n-1]||null};
+const slotInfo=env=>keySlots(env).map((key,i)=>({slot:i+1,configured:!!key}));
 const PREFERRED=[
  {name:"ERNIE 5.5 Flash",pattern:/^baidu\/.*ernie.*flash.*:free$/i},
  {name:"Nemotron 3 Ultra",pattern:/^nvidia\/.*nemotron-3-ultra.*:free$/i},
@@ -26,7 +29,7 @@ function orderModels(models,key){
 }
 async function checkKey(env){
  let r;
- try{r=await fetch("https://openrouter.ai/api/v1/key",{headers:{"Authorization":"Bearer "+env.OPENROUTER_API_KEY},signal:AbortSignal.timeout(10000)})}
+ try{r=await fetch("https://openrouter.ai/api/v1/key",{headers:{"Authorization":"Bearer "+activeKey(env)},signal:AbortSignal.timeout(10000)})}
  catch(err){throw Error(err?.name==="TimeoutError"?"انتهت مهلة فحص مفتاح OpenRouter":"تعذر الاتصال بخدمة OpenRouter")}
  if(r.status===401||r.status===403)throw Error("مفتاح OpenRouter مرفوض (HTTP "+r.status+")");
  if(!r.ok)throw Error("فحص المفتاح فشل (HTTP "+r.status+")");
@@ -73,7 +76,7 @@ async function askProviders(env,messages,maxTokens,clientKey){
  const providers=[];
  if(env.GEMINI_API_KEY)providers.push("gemini");
  if(env.GROQ_API_KEY)providers.push("groq");
- if(env.OPENROUTER_API_KEY)providers.push("openrouter");
+ if(activeKey(env))providers.push("openrouter");
  if(!providers.length)throw Error("لم تُضف أي مفاتيح للمزودين");
  // Rotate independent providers by minute; never rotate accounts to evade a provider quota.
  const shift=Math.floor(Date.now()/60000)%providers.length;
@@ -99,7 +102,7 @@ async function askProviders(env,messages,maxTokens,clientKey){
     modelName=candidates[0].id;
    }catch(e){errors.push("OpenRouter: "+e.message);continue}
    url="https://openrouter.ai/api/v1/chat/completions";
-   headers.Authorization="Bearer "+env.OPENROUTER_API_KEY;
+   headers.Authorization="Bearer "+activeKey(env);
    body={model:modelName,messages,max_tokens:maxTokens,temperature:0.4};
   }
   try{
@@ -119,14 +122,14 @@ async function askProviders(env,messages,maxTokens,clientKey){
 }
 export default {async fetch(req,env){
  const u=new URL(req.url);if(!u.pathname.startsWith("/api/"))return env.ASSETS.fetch(req);
- if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!(env.OPENROUTER_API_KEY||env.GEMINI_API_KEY||env.GROQ_API_KEY),providers:{openrouter:!!env.OPENROUTER_API_KEY,gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY},model:"multi-provider",version:VERSION,preferredModels:PREFERRED.map(x=>x.name)});
+ if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!(keySlots(env).some(Boolean)||env.GEMINI_API_KEY||env.GROQ_API_KEY),providers:{openrouter:!!activeKey(env),gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY},openrouterKeys:slotInfo(env),activeOpenrouterKey:Number(env.OPENROUTER_ACTIVE_KEY||1),model:"multi-provider",version:VERSION,preferredModels:PREFERRED.map(x=>x.name)});
  if(!["/api/test","/api/generate"].includes(u.pathname))return j({error:"غير موجود"},404);
  if(req.method!=="POST")return j({error:"طريقة غير مدعومة"},405);
  const origin=req.headers.get("Origin");if(origin&&origin!==u.origin)return j({error:"طلب خارجي غير مسموح"},403);
- if(!(env.OPENROUTER_API_KEY||env.GEMINI_API_KEY||env.GROQ_API_KEY))return j({error:"لم تتم إضافة مفتاح لأي مزود"},503);
+ if(!(keySlots(env).some(Boolean)||env.GEMINI_API_KEY||env.GROQ_API_KEY))return j({error:"لم تتم إضافة مفتاح لأي مزود"},503);
  if(!env.GEN_LIMIT)return j({error:"حماية حد الاستخدام غير مفعّلة"},503);
  if(Number(req.headers.get("Content-Length")||0)>8000)return j({error:"طلب كبير جداً"},413);
- if(u.pathname==="/api/test"){try{return j(env.OPENROUTER_API_KEY?{...await checkKey(env),version:VERSION,providers:{gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY}}:{ok:true,configured:true,version:VERSION,message:"تم العثور على مفاتيح مزودين، لكن لم تُختبر صلاحيتها",providers:{gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY}})}catch(err){return j({error:err.message},502)}}
+ if(u.pathname==="/api/test"){try{return j(activeKey(env)?{...await checkKey(env),version:VERSION,providers:{gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY}}:{ok:true,configured:true,version:VERSION,message:"تم العثور على مفاتيح مزودين، لكن لم تُختبر صلاحيتها",providers:{gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY}})}catch(err){return j({error:err.message},502)}}
  const ip=req.headers.get("CF-Connecting-IP")||"unknown",lim=await env.GEN_LIMIT.limit({key:ip});
  if(!lim.success)return j({error:"تم بلوغ حد الطلبات. حاول بعد دقيقة"},429,{"retry-after":"60"});
  try{
