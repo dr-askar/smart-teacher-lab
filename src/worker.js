@@ -1,4 +1,4 @@
-const VERSION="2026-11-20-multi-free-v3";
+const VERSION="2026-11-20-multiprovider-v4";
 const j=(x,s=200,h={})=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store",...h}});
 const PREFERRED=[
  {name:"ERNIE 5.5 Flash",pattern:/^baidu\/.*ernie.*flash.*:free$/i},
@@ -68,16 +68,65 @@ async function ask(e,messages,max_tokens,clientKey){
  }
  throw Error(last+". لا تعاود الطلب قبل انتهاء فترة الانتظار.");
 }
+async function askProviders(env,messages,maxTokens,clientKey){
+ const deadline=Date.now()+60000,errors=[];
+ const providers=[];
+ if(env.GEMINI_API_KEY)providers.push("gemini");
+ if(env.GROQ_API_KEY)providers.push("groq");
+ if(env.OPENROUTER_API_KEY)providers.push("openrouter");
+ if(!providers.length)throw Error("لم تُضف أي مفاتيح للمزودين");
+ // Rotate independent providers by minute; never rotate accounts to evade a provider quota.
+ const shift=Math.floor(Date.now()/60000)%providers.length;
+ const ordered=providers.slice(shift).concat(providers.slice(0,shift));
+ for(let idx=0;idx<ordered.length;idx++){
+  const provider=ordered[idx],remaining=deadline-Date.now();
+  if(remaining<2500)break;
+  const timeout=Math.min(remaining,idx===ordered.length-1?remaining:Math.max(8000,Math.floor(remaining/(ordered.length-idx))));
+  let url,headers={"Content-Type":"application/json"},body,modelName;
+  if(provider==="gemini"){
+   modelName=env.GEMINI_MODEL||"gemini-2.5-flash-lite";
+   url="https://generativelanguage.googleapis.com/v1beta/models/"+encodeURIComponent(modelName)+":generateContent";
+   headers["x-goog-api-key"]=env.GEMINI_API_KEY;
+   body={systemInstruction:{parts:[{text:messages.find(m=>m.role==="system")?.content||""}]},contents:[{role:"user",parts:[{text:messages.filter(m=>m.role==="user").map(m=>m.content).join("\n")}]}],generationConfig:{maxOutputTokens:maxTokens,temperature:0.4}};
+  }else if(provider==="groq"){
+   modelName=env.GROQ_MODEL||"llama-3.3-70b-versatile";
+   url="https://api.groq.com/openai/v1/chat/completions";
+   headers.Authorization="Bearer "+env.GROQ_API_KEY;
+   body={model:modelName,messages,max_tokens:maxTokens,temperature:0.4};
+  }else{
+   try{
+    const candidates=orderModels(await availableModels(),clientKey);
+    modelName=candidates[0].id;
+   }catch(e){errors.push("OpenRouter: "+e.message);continue}
+   url="https://openrouter.ai/api/v1/chat/completions";
+   headers.Authorization="Bearer "+env.OPENROUTER_API_KEY;
+   body={model:modelName,messages,max_tokens:maxTokens,temperature:0.4};
+  }
+  try{
+   const response=await fetch(url,{method:"POST",headers,body:JSON.stringify(body),signal:AbortSignal.timeout(timeout)});
+   if(!response.ok){
+    let detail="";try{const d=await response.json();detail=String(d?.error?.message||d?.error?.status||"").slice(0,100)}catch{}
+    errors.push(provider+": HTTP "+response.status+(response.status===429?" (حصة أو ازدحام)":"")+(detail?": "+detail:""));
+    continue;
+   }
+   const data=await response.json();
+   const content=provider==="gemini"?(data?.candidates?.[0]?.content?.parts||[]).map(p=>p.text||"").join(""):typeof data?.choices?.[0]?.message?.content==="string"?data.choices[0].message.content:"";
+   if(content.trim())return {content,model:provider+"/"+modelName,provider};
+   errors.push(provider+": استجابة فارغة");
+  }catch(e){errors.push(provider+": "+(e?.name==="TimeoutError"?"انتهت المهلة":"تعذر الاتصال"))}
+ }
+ throw Error("تعذر التوليد عبر المزودين: "+errors.join(" | ").slice(0,350));
+}
 export default {async fetch(req,env){
  const u=new URL(req.url);if(!u.pathname.startsWith("/api/"))return env.ASSETS.fetch(req);
- if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!env.OPENROUTER_API_KEY,model:"auto-free",version:VERSION,preferredModels:PREFERRED.map(x=>x.name)});
+ if(u.pathname==="/api/health"&&req.method==="GET")return j({configured:!!(env.OPENROUTER_API_KEY||env.GEMINI_API_KEY||env.GROQ_API_KEY),providers:{openrouter:!!env.OPENROUTER_API_KEY,gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY},model:"multi-provider",version:VERSION,preferredModels:PREFERRED.map(x=>x.name)});
  if(!["/api/test","/api/generate"].includes(u.pathname))return j({error:"غير موجود"},404);
  if(req.method!=="POST")return j({error:"طريقة غير مدعومة"},405);
  const origin=req.headers.get("Origin");if(origin&&origin!==u.origin)return j({error:"طلب خارجي غير مسموح"},403);
- if(!env.OPENROUTER_API_KEY)return j({error:"لم تتم إضافة مفتاح OpenRouter بعد"},503);
+ if(!(env.OPENROUTER_API_KEY||env.GEMINI_API_KEY||env.GROQ_API_KEY))return j({error:"لم تتم إضافة مفتاح لأي مزود"},503);
  if(!env.GEN_LIMIT)return j({error:"حماية حد الاستخدام غير مفعّلة"},503);
  if(Number(req.headers.get("Content-Length")||0)>8000)return j({error:"طلب كبير جداً"},413);
- if(u.pathname==="/api/test"){try{return j({...await checkKey(env),version:VERSION})}catch(err){return j({error:err.message},502)}}
+ if(u.pathname==="/api/test"){try{return j(env.OPENROUTER_API_KEY?{...await checkKey(env),version:VERSION,providers:{gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY}}:{ok:true,configured:true,version:VERSION,message:"تم العثور على مفاتيح مزودين، لكن لم تُختبر صلاحيتها",providers:{gemini:!!env.GEMINI_API_KEY,groq:!!env.GROQ_API_KEY}})}catch(err){return j({error:err.message},502)}}
  const ip=req.headers.get("CF-Connecting-IP")||"unknown",lim=await env.GEN_LIMIT.limit({key:ip});
  if(!lim.success)return j({error:"تم بلوغ حد الطلبات. حاول بعد دقيقة"},429,{"retry-after":"60"});
  try{
@@ -88,7 +137,7 @@ export default {async fetch(req,env){
 DESIGN QUALITY: make a genuine simulation, not a trivial counter or a generic quiz. Choose a visual metaphor appropriate to the subject: apparatus, circuit, beakers, geometry diagram, animated objects, or SVG diagram. Provide a clear learning objective, a real-world scenario, 2-3 meaningful adjustable variables or choices, a visually changing simulation, scientifically accurate calculations and units, immediate explanatory feedback, a reset button, and one prediction/challenge question with a reveal/check answer. Explain causal relationships and limits. Use Arabic RTL labels, beautiful responsive layout, CSS gradients/cards and accessible buttons. Keep the educational interaction central; avoid decorative clutter.
 
 IMPLEMENTATION: HTML fragment only. Inline CSS scoped under .lab-experiment. One inline script in an IIFE that selects elements within .lab-experiment and wires events with addEventListener. Include <div class="lab-experiment"> as the root. Use SVG and CSS animations when useful. Do not rely on remote assets, imports, fetch, external URLs, libraries, iframes, document.write, eval, localStorage, or browser permissions. No external data. Do not fake physical accuracy: state simplifications. Ensure JavaScript syntax is valid, controls update both numerical results and visual state. Target roughly 4500-10000 characters; prioritize working controls over verbose text. Output code only.`;
-  const r=await ask(env,[{role:"system",content:system},{role:"user",content:"Create the following high-quality teaching simulation: "+p}],5200,ip);
+  const r=await askProviders(env,[{role:"system",content:system},{role:"user",content:"Create the following high-quality teaching simulation: "+p}],5200,ip);
   let fragment=r.content.trim().replace(/^```(?:html)?\s*/i,"").replace(/\s*```$/,"");
   if(/<html\b/i.test(fragment))fragment=fragment.replace(/^[\s\S]*?<body[^>]*>/i,"").replace(/<\/body>[\s\S]*$/i,"");
   if(!fragment||fragment.length>65000||/<(?:iframe|object|embed|form|base|meta|link)\b/i.test(fragment)||/\b(?:fetch|XMLHttpRequest|WebSocket|importScripts|eval)\s*\(/i.test(fragment)||/<script\b[^>]*\bsrc\s*=/i.test(fragment)||/<script\b/i.test(fragment)&&!/<\/script>/i.test(fragment)||!/(?:<input|<button|<select)/i.test(fragment))throw Error("النموذج لم يُنتج تجربة تفاعلية مكتملة. حاول بعد دقيقة.");
